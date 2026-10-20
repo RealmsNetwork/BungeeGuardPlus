@@ -12,7 +12,7 @@ Recognized Floodgate handshakes are passed through without requiring a separate 
 
 ## Useful Links
 
-- [Download](https://github.com/nickuc/BungeeGuard/releases)
+- [Download](https://github.com/RealmsNetwork/BungeeGuardPlus/releases)
 - [Install Guide](INSTALLATION.md)
 
 ## The problem

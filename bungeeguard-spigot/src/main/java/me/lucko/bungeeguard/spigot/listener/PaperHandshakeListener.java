@@ -80,7 +80,14 @@ public class PaperHandshakeListener extends AbstractHandshakeListener implements
                     }
                 }
 
-                this.logger.warning("Denying connection from " + ip + " - " + (plugin.isVerbose() ? fail.describeConnection() : "") + " - reason: " + fail.reason().name());
+                String details = plugin.isVerbose() ? fail.describeConnection() : "";
+                if (fail.reason() == BungeeCordHandshake.Fail.Reason.NO_TOKEN) {
+                    if (!details.isEmpty()) {
+                        details += " - ";
+                    }
+                    details += "If this is a Bedrock/Education player, Floodgate forwarding data was not detected; check send-floodgate-data on the proxy and install the updated BungeeGuard backend plugin.";
+                }
+                this.logger.warning("Denying connection from " + ip + " - " + details + " - reason: " + fail.reason().name());
             }
 
             if (fail.reason() == BungeeCordHandshake.Fail.Reason.INCORRECT_TOKEN) {

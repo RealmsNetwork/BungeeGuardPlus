@@ -71,28 +71,71 @@ public class BungeeCordHandshake {
     }
 
     private static BungeeCordHandshake decodeAndVerify0(String handshake, TokenStore tokenStore) throws Exception {
-        if (tokenStore.isUsingDefaultConfig()) {
-            return new Fail(Fail.Reason.INCORRECT_TOKEN, "Allowed tokens have not been configured! Please refer to https://github.com/lucko/BungeeGuard/blob/master/INSTALLATION.md for help.");
-        }
-
         if (handshake.length() > HANDSHAKE_LENGTH_LIMIT) {
             return new Fail(Fail.Reason.INVALID_HANDSHAKE, "handshake length " + handshake.length() + " is > " + HANDSHAKE_LENGTH_LIMIT);
         }
 
+        // BungeeCord forwards the hostname, client address, UUID, and (usually) a JSON
+        // properties array separated by NUL characters. Floodgate inserts its encrypted
+        // payload into the hostname. Do not assume that the handshake has exactly five
+        // fields: extra hostname components and omitted empty trailing fields are possible.
         String[] split = handshake.split("\00");
-        boolean isFloodgate = split.length == 5 && split[1].startsWith("^Floodgate^");
-        if (!isFloodgate && split.length != 3 && split.length != 4) {
+        boolean hasProperties = split.length >= 4 && isPropertiesArray(split[split.length - 1]);
+        int socketAddressIndex = split.length - (hasProperties ? 3 : 2);
+        int floodgateDataIndex = findFloodgateDataIndex(split, socketAddressIndex);
+        boolean isFloodgate = floodgateDataIndex >= 1;
+
+        if (isFloodgate) {
+            int uuidIndex = hasProperties ? split.length - 2 : split.length - 1;
+            if (socketAddressIndex < 1 || uuidIndex <= socketAddressIndex) {
+                return new Fail(Fail.Reason.INVALID_HANDSHAKE, encodeBase64(handshake));
+            }
+
+            String serverHostname = String.join("\00", Arrays.copyOfRange(split, 0, socketAddressIndex));
+            String socketAddressHostname = split[socketAddressIndex];
+            UUID uniqueId;
+            try {
+                uniqueId = UUID.fromString(split[uuidIndex].replaceFirst("(\\w{8})(\\w{4})(\\w{4})(\\w{4})(\\w{12})", "$1-$2-$3-$4-$5"));
+            } catch (Exception e) {
+                return new Fail(Fail.Reason.INVALID_UNIQUE_ID, encodeBase64(handshake));
+            }
+
+            String connectionDescription = uniqueId + " @ " + encodeBase64(socketAddressHostname);
+            List<JsonObject> properties = new LinkedList<>();
+            if (hasProperties) {
+                List<JsonObject> decodedProperties = GSON.fromJson(split[split.length - 1], PROPERTY_LIST_TYPE);
+                if (decodedProperties == null) {
+                    return new Fail(Fail.Reason.INVALID_HANDSHAKE, connectionDescription);
+                }
+                properties.addAll(decodedProperties);
+            }
+
+            // Floodgate authenticates its own encrypted forwarding payload with its
+            // configured key on the backend. A separate BungeeGuard token is therefore
+            // not required for a recognized Floodgate handshake. Remove any BungeeGuard
+            // property before forwarding the handshake, so the secret cannot leak.
+            properties.removeIf(property ->
+                    property != null
+                            && property.has(PROPERTY_NAME_KEY)
+                            && property.get(PROPERTY_NAME_KEY).isJsonPrimitive()
+                            && BUNGEEGUARD_TOKEN_NAME.equals(property.get(PROPERTY_NAME_KEY).getAsString()));
+
+            return new Success(serverHostname, socketAddressHostname, uniqueId,
+                    GSON.toJson(properties, PROPERTY_LIST_TYPE));
+        }
+
+        if (split.length != 3 && split.length != 4) {
             return new Fail(Fail.Reason.INVALID_HANDSHAKE, encodeBase64(handshake));
         }
 
-        int readIndex;
-        String serverHostname = split[0];
-        if (isFloodgate) {
-            serverHostname += "\00" + split[1];
-            readIndex = 2;
-        } else {
-            readIndex = 1;
+        // Keep the normal BungeeCord handshake path strict. Ordinary Java clients still
+        // need an allowed BungeeGuard token even when their handshake has extra properties.
+        if (tokenStore.isUsingDefaultConfig()) {
+            return new Fail(Fail.Reason.INCORRECT_TOKEN, "Allowed tokens have not been configured! Please refer to https://github.com/lucko/BungeeGuard/blob/master/INSTALLATION.md for help.");
         }
+
+        int readIndex = 1;
+        String serverHostname = split[0];
         String socketAddressHostname = split[readIndex++];
         UUID uniqueId;
         try {
@@ -108,21 +151,6 @@ public class BungeeCordHandshake {
         }
 
         List<JsonObject> properties = new LinkedList<>(GSON.fromJson(split[readIndex], PROPERTY_LIST_TYPE));
-
-        if (isFloodgate) {
-            // Floodgate carries its own encrypted forwarding payload in the hostname.
-            // Its backend plugin validates that payload with Floodgate's configured key,
-            // so do not require a separate BungeeGuard token for these connections.
-            // Remove any BungeeGuard token property to prevent it leaking downstream.
-            properties.removeIf(property ->
-                    property.has(PROPERTY_NAME_KEY)
-                            && property.get(PROPERTY_NAME_KEY).isJsonPrimitive()
-                            && BUNGEEGUARD_TOKEN_NAME.equals(property.get(PROPERTY_NAME_KEY).getAsString()));
-
-            return new Success(serverHostname, socketAddressHostname, uniqueId,
-                    GSON.toJson(properties, PROPERTY_LIST_TYPE));
-        }
-
         if (properties.isEmpty()) {
             return new Fail(Fail.Reason.NO_TOKEN, connectionDescription);
         }
@@ -151,7 +179,30 @@ public class BungeeCordHandshake {
         String newPropertiesString = GSON.toJson(properties, PROPERTY_LIST_TYPE);
         return new Success(serverHostname, socketAddressHostname, uniqueId, newPropertiesString);
     }
-    
+
+    private static boolean isPropertiesArray(String value) {
+        String trimmed = value.trim();
+        return trimmed.startsWith("[") && trimmed.endsWith("]");
+    }
+
+    /**
+     * Finds Floodgate's encrypted payload among the hostname components, before the
+     * forwarded client address and UUID. Returns -1 when the handshake has no marker.
+     */
+    private static int findFloodgateDataIndex(String[] split, int socketAddressIndex) {
+        if (socketAddressIndex <= 1) {
+            return -1;
+        }
+
+        for (int i = 1; i < socketAddressIndex; i++) {
+            String field = split[i];
+            if (field.startsWith("^Floodgate^") && field.length() > "^Floodgate^".length()) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public static String encodeBase64(String s) {
         return Base64.getEncoder().encodeToString(s.getBytes(StandardCharsets.UTF_8));
     }

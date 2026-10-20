@@ -93,7 +93,14 @@ public class ProtocolHandshakeListener extends AbstractHandshakeListener {
                             ip = BungeeCordHandshake.encodeBase64(ip);
                         }
                     }
-                    this.plugin.getLogger().warning("Denying connection from " + ip + " - " + (backend.isVerbose() ? fail.describeConnection() : "") + " - reason: " + fail.reason().name());
+                    String details = backend.isVerbose() ? fail.describeConnection() : "";
+                if (fail.reason() == BungeeCordHandshake.Fail.Reason.NO_TOKEN) {
+                    if (!details.isEmpty()) {
+                        details += " - ";
+                    }
+                    details += "If this is a Bedrock/Education player, Floodgate forwarding data was not detected; check send-floodgate-data on the proxy and install the updated BungeeGuard backend plugin.";
+                }
+                this.plugin.getLogger().warning("Denying connection from " + ip + " - " + details + " - reason: " + fail.reason().name());
                 }
 
                 String kickMessage;
