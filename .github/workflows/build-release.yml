@@ -1,0 +1,152 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Maven modules
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.project-version.outputs.version }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Read Maven project version
+        id: project-version
+        shell: bash
+        run: |
+          version="$(python3 -c 'import xml.etree.ElementTree as ET; root = ET.parse("pom.xml").getroot(); print(root.find("{http://maven.apache.org/POM/4.0.0}version").text.strip())')"
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not read the project version from the root pom.xml."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building BungeeGuard+ version $version"
+
+      - name: Build and verify all Maven modules
+        run: mvn --batch-mode --no-transfer-progress clean verify
+
+      - name: Collect distributable plugin JARs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-files
+
+          for module in bungeeguard-bungee bungeeguard-spigot bungeeguard-sponge bungeeguard-universal; do
+            if [[ -d "$module/target" ]]; then
+              find "$module/target" -maxdepth 1 -type f -name '*.jar' \
+                ! -name '*-sources.jar' \
+                ! -name '*-javadoc.jar' \
+                ! -name '*-tests.jar' \
+                -exec cp {} release-files/ \;
+            fi
+          done
+
+          if ! find release-files -maxdepth 1 -type f -name '*.jar' -print -quit | grep -q .; then
+            echo "::error::The build completed without producing any distributable plugin JARs."
+            exit 1
+          fi
+
+          (cd release-files && sha256sum ./*.jar > SHA256SUMS.txt)
+          echo "Release files:"
+          ls -lh release-files/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-jars
+          path: release-files/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Tag and publish GitHub Release
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !endsWith(needs.build.outputs.version, '-SNAPSHOT')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: bungeeguard-release-${{ needs.build.outputs.version }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out source and tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download built plugin JARs
+        uses: actions/download-artifact@v8
+        with:
+          name: release-jars
+          path: release-files
+
+      - name: Create version tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists. Build succeeded; skipping duplicate release."
+            {
+              echo "## Release skipped"
+              echo "A GitHub release for `$tag` already exists."
+              echo "Bump the Maven version in the POM files to publish a new release."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          remote_tags="$(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")"
+          if [[ -n "$remote_tags" ]]; then
+            direct_sha="$(awk -v ref="refs/tags/$tag" '$2 == ref { print $1 }' <<< "$remote_tags")"
+            peeled_sha="$(awk -v ref="refs/tags/$tag^{}" '$2 == ref { print $1 }' <<< "$remote_tags")"
+            existing_sha="${peeled_sha:-$direct_sha}"
+
+            if [[ "$existing_sha" != "$GITHUB_SHA" ]]; then
+              echo "::error::Tag $tag already exists at $existing_sha, not this workflow commit. Bump the Maven version rather than moving an existing tag."
+              exit 1
+            fi
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag --annotate "$tag" "$GITHUB_SHA" --message "BungeeGuard+ $VERSION"
+            git push origin "refs/tags/$tag"
+          fi
+
+          gh release create "$tag" release-files/*.jar release-files/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "BungeeGuard+ $VERSION" \
+            --generate-notes \
+            --verify-tag
+
+          {
+            echo "## Release published"
+            echo "- **Version:** `$VERSION`"
+            echo "- **Tag:** [`$tag`](https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag)"
+            echo "- **Commit:** `$GITHUB_SHA`"
+            echo "- Built plugin JARs and `SHA256SUMS.txt` are attached to the release."
+          } >> "$GITHUB_STEP_SUMMARY"
