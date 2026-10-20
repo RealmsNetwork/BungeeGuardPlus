@@ -57,7 +57,7 @@ public class BungeeGuardBackendPlugin extends JavaPlugin implements BungeeGuardB
         saveDefaultConfig();
         this.tokenStore = new TokenStore(this);
         this.tokenStore.load();
-        FloodgateHandshakeIntegration.register(getLogger());
+        registerFloodgateIntegrationWhenAvailable();
 
         if (hasSpigotConfigMethod() && !isBungeeEnabled()) {
             getLogger().severe("*-----------------------------------------------------------*");
@@ -105,6 +105,26 @@ public class BungeeGuardBackendPlugin extends JavaPlugin implements BungeeGuardB
 
         // prevents unloading the plugin at runtime
         getServer().getPluginManager().registerEvents(new ExtraProtectionListener(logger), this);
+    }
+
+    private void registerFloodgateIntegrationWhenAvailable() {
+        if (FloodgateHandshakeIntegration.register(getLogger())) {
+            return;
+        }
+
+        getLogger().info("Floodgate is not enabled yet; waiting for Floodgate/EduFloodgate before registering the Bedrock/Education token bypass.");
+        Listener enableListener = new Listener() {
+            @EventHandler
+            public void onPluginEnable(PluginEnableEvent event) {
+                if (!FloodgateHandshakeIntegration.isFloodgatePlugin(event.getPlugin())) {
+                    return;
+                }
+                if (FloodgateHandshakeIntegration.register(event.getPlugin(), getLogger())) {
+                    HandlerList.unregisterAll(this);
+                }
+            }
+        };
+        getServer().getPluginManager().registerEvents(enableListener, this);
     }
 
     @Override

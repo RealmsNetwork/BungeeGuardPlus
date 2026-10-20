@@ -10,6 +10,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.security.SecureRandom;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -37,10 +38,40 @@ public final class FloodgateHandshakeIntegration {
     private FloodgateHandshakeIntegration() {
     }
 
-    /** Register a Floodgate handshake callback if Floodgate is installed and exposes its 2.x API. */
+    /**
+     * Detect Floodgate / EduFloodgate without assuming the plugin's declared casing or name.
+     * The API class is the strongest signal; the name check also lets the enable-event listener
+     * recognize the plugin before testing whether its API has finished initializing.
+     */
+    public static boolean isFloodgatePlugin(Plugin candidate) {
+        if (candidate == null) {
+            return false;
+        }
+        String name = candidate.getDescription().getName();
+        if (name != null && name.toLowerCase(Locale.ROOT).contains("floodgate")) {
+            return true;
+        }
+        try {
+            candidate.getClass().getClassLoader().loadClass("org.geysermc.floodgate.api.InstanceHolder");
+            return true;
+        } catch (ClassNotFoundException | LinkageError ignored) {
+            return false;
+        }
+    }
+
+    /** Register Floodgate's callback if a compatible, enabled instance is already available. */
     public static synchronized boolean register(Logger logger) {
-        Plugin floodgate = Bukkit.getPluginManager().getPlugin("floodgate");
-        if (floodgate == null || !floodgate.isEnabled()) {
+        for (Plugin candidate : Bukkit.getPluginManager().getPlugins()) {
+            if (candidate.isEnabled() && isFloodgatePlugin(candidate)) {
+                return register(candidate, logger);
+            }
+        }
+        return false;
+    }
+
+    /** Register a callback against the exact Floodgate plugin that has just enabled. */
+    public static synchronized boolean register(Plugin floodgate, Logger logger) {
+        if (floodgate == null || !floodgate.isEnabled() || !isFloodgatePlugin(floodgate)) {
             return false;
         }
         if (handlerId >= 0) {
