@@ -6,6 +6,7 @@ package me.lucko.bungeeguard.spigot;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.Plugin;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -119,7 +120,9 @@ public final class FloodgateHandshakeIntegration {
     private static void handleValidatedFloodgateHandshake(Object data, Logger logger) {
         try {
             boolean isFloodgatePlayer = Boolean.TRUE.equals(data.getClass().getMethod("isFloodgatePlayer").invoke(data));
-            if (!isFloodgatePlayer) {
+            if (!isFloodgatePlayer || !hasExpectedFloodgateDataLength(data)) {
+                // Floodgate also calls custom handlers for decrypt / malformed-data failures.
+                // Only valid payload lengths may mint a BungeeGuard bypass marker.
                 return;
             }
 
@@ -150,6 +153,24 @@ public final class FloodgateHandshakeIntegration {
         } catch (ReflectiveOperationException | RuntimeException ex) {
             logger.log(Level.WARNING, "Could not mark a Floodgate-validated handshake for BungeeGuard; the connection may still require a BungeeGuard token.", ex);
         }
+    }
+
+    private static boolean hasExpectedFloodgateDataLength(Object handshakeData) throws ReflectiveOperationException {
+        Object bedrockData = handshakeData.getClass().getMethod("getBedrockData").invoke(handshakeData);
+        if (bedrockData == null) {
+            return false;
+        }
+
+        Method getDataLength = bedrockData.getClass().getMethod("getDataLength");
+        int actualLength = ((Number) getDataLength.invoke(bedrockData)).intValue();
+
+        // EXPECTED_LENGTH is an implementation constant in Floodgate's BedrockData class rather
+        // than part of the public API. Read it reflectively to avoid a compile-time dependency;
+        // fail closed if a future Floodgate version removes or changes this validation contract.
+        Field expectedLengthField = bedrockData.getClass().getDeclaredField("EXPECTED_LENGTH");
+        expectedLengthField.setAccessible(true);
+        int expectedLength = expectedLengthField.getInt(null);
+        return actualLength == expectedLength;
     }
 
     static String insertMarkerAfterHostname(String hostname, String marker) {
