@@ -82,13 +82,14 @@ public class BungeeCordHandshake {
         String[] split = handshake.split("\00");
         boolean hasProperties = split.length >= 4 && isPropertiesArray(split[split.length - 1]);
         int socketAddressIndex = split.length - (hasProperties ? 3 : 2);
-        int floodgateDataIndex = findFloodgateDataIndex(split, socketAddressIndex);
         int validatedFloodgateMarkerIndex = findValidatedFloodgateMarkerIndex(split, socketAddressIndex);
         boolean hasValidatedFloodgateMarker = validatedFloodgateMarkerIndex >= 1
                 && FloodgateHandshakeIntegration.consumeValidatedMarker(split[validatedFloodgateMarkerIndex]);
-        boolean isFloodgate = floodgateDataIndex >= 1 || hasValidatedFloodgateMarker;
 
-        if (isFloodgate) {
+        // Never bypass Java token validation based only on a client-supplied ^Floodgate^ string.
+        // The encrypted marker is normally consumed by Floodgate before this listener runs; our
+        // private marker is the only bypass accepted here because it was minted after validation.
+        if (hasValidatedFloodgateMarker) {
             int uuidIndex = hasProperties ? split.length - 2 : split.length - 1;
             if (socketAddressIndex < 1 || uuidIndex <= socketAddressIndex) {
                 return new Fail(Fail.Reason.INVALID_HANDSHAKE, encodeBase64(handshake));
@@ -208,24 +209,6 @@ public class BungeeCordHandshake {
     private static boolean isPropertiesArray(String value) {
         String trimmed = value.trim();
         return trimmed.startsWith("[") && trimmed.endsWith("]");
-    }
-
-    /**
-     * Finds Floodgate's encrypted payload among the hostname components, before the
-     * forwarded client address and UUID. Returns -1 when the handshake has no marker.
-     */
-    private static int findFloodgateDataIndex(String[] split, int socketAddressIndex) {
-        if (socketAddressIndex <= 1) {
-            return -1;
-        }
-
-        for (int i = 1; i < socketAddressIndex; i++) {
-            String field = split[i];
-            if (field.startsWith("^Floodgate^") && field.length() > "^Floodgate^".length()) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     public static String encodeBase64(String s) {
