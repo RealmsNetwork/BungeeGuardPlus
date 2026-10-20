@@ -83,7 +83,10 @@ public class BungeeCordHandshake {
         boolean hasProperties = split.length >= 4 && isPropertiesArray(split[split.length - 1]);
         int socketAddressIndex = split.length - (hasProperties ? 3 : 2);
         int floodgateDataIndex = findFloodgateDataIndex(split, socketAddressIndex);
-        boolean isFloodgate = floodgateDataIndex >= 1;
+        int validatedFloodgateMarkerIndex = findValidatedFloodgateMarkerIndex(split, socketAddressIndex);
+        boolean hasValidatedFloodgateMarker = validatedFloodgateMarkerIndex >= 1
+                && FloodgateHandshakeIntegration.consumeValidatedMarker(split[validatedFloodgateMarkerIndex]);
+        boolean isFloodgate = floodgateDataIndex >= 1 || hasValidatedFloodgateMarker;
 
         if (isFloodgate) {
             int uuidIndex = hasProperties ? split.length - 2 : split.length - 1;
@@ -91,7 +94,17 @@ public class BungeeCordHandshake {
                 return new Fail(Fail.Reason.INVALID_HANDSHAKE, encodeBase64(handshake));
             }
 
-            String serverHostname = String.join("\00", Arrays.copyOfRange(split, 0, socketAddressIndex));
+            List<String> hostnameComponents = new ArrayList<>();
+            for (int i = 0; i < socketAddressIndex; i++) {
+                // Floodgate's backend handler consumes the encrypted payload before Paper's
+                // PlayerHandshakeEvent fires. Our one-use marker bridges that lifecycle gap;
+                // strip it so it never reaches the actual Minecraft server hostname.
+                if (hasValidatedFloodgateMarker && i == validatedFloodgateMarkerIndex) {
+                    continue;
+                }
+                hostnameComponents.add(split[i]);
+            }
+            String serverHostname = String.join("\00", hostnameComponents);
             String socketAddressHostname = split[socketAddressIndex];
             UUID uniqueId;
             try {
@@ -178,6 +191,18 @@ public class BungeeCordHandshake {
 
         String newPropertiesString = GSON.toJson(properties, PROPERTY_LIST_TYPE);
         return new Success(serverHostname, socketAddressHostname, uniqueId, newPropertiesString);
+    }
+
+    private static int findValidatedFloodgateMarkerIndex(String[] split, int socketAddressIndex) {
+        if (socketAddressIndex <= 1) {
+            return -1;
+        }
+        for (int i = 1; i < socketAddressIndex; i++) {
+            if (FloodgateHandshakeIntegration.isValidatedMarkerCandidate(split[i])) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static boolean isPropertiesArray(String value) {

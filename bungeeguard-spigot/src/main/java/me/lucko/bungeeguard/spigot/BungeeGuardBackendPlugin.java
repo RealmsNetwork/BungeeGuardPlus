@@ -57,6 +57,7 @@ public class BungeeGuardBackendPlugin extends JavaPlugin implements BungeeGuardB
         saveDefaultConfig();
         this.tokenStore = new TokenStore(this);
         this.tokenStore.load();
+        FloodgateHandshakeIntegration.register(getLogger());
 
         if (hasSpigotConfigMethod() && !isBungeeEnabled()) {
             getLogger().severe("*-----------------------------------------------------------*");
@@ -104,6 +105,11 @@ public class BungeeGuardBackendPlugin extends JavaPlugin implements BungeeGuardB
 
         // prevents unloading the plugin at runtime
         getServer().getPluginManager().registerEvents(new ExtraProtectionListener(logger), this);
+    }
+
+    @Override
+    public void onDisable() {
+        FloodgateHandshakeIntegration.unregister();
     }
 
     @Override
