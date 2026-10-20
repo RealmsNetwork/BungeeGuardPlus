@@ -108,6 +108,21 @@ public class BungeeCordHandshake {
         }
 
         List<JsonObject> properties = new LinkedList<>(GSON.fromJson(split[readIndex], PROPERTY_LIST_TYPE));
+
+        if (isFloodgate) {
+            // Floodgate carries its own encrypted forwarding payload in the hostname.
+            // Its backend plugin validates that payload with Floodgate's configured key,
+            // so do not require a separate BungeeGuard token for these connections.
+            // Remove any BungeeGuard token property to prevent it leaking downstream.
+            properties.removeIf(property ->
+                    property.has(PROPERTY_NAME_KEY)
+                            && property.get(PROPERTY_NAME_KEY).isJsonPrimitive()
+                            && BUNGEEGUARD_TOKEN_NAME.equals(property.get(PROPERTY_NAME_KEY).getAsString()));
+
+            return new Success(serverHostname, socketAddressHostname, uniqueId,
+                    GSON.toJson(properties, PROPERTY_LIST_TYPE));
+        }
+
         if (properties.isEmpty()) {
             return new Fail(Fail.Reason.NO_TOKEN, connectionDescription);
         }

@@ -1,6 +1,6 @@
 name: BungeeGuard
 version: ${project.version}
-description: A plugin-based security/firewall solution for BungeeCord and Velocity proxies.
+description: Token-based backend protection with Floodgate, Geyser, and Education Edition compatibility.
 authors: [Luck, NickUC]
 load: STARTUP
 

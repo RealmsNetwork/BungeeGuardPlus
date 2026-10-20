@@ -4,6 +4,12 @@
   <br />
 </div>
 
+This is the RealmsNetwork-maintained fork of BungeeGuard+. It protects Minecraft backend servers against direct proxy bypass and includes compatibility handling for Floodgate-backed Geyser and Minecraft Education Edition connections.
+
+### Floodgate and Education Edition compatibility
+
+Recognized Floodgate handshakes are passed through without requiring a separate BungeeGuard token. Floodgate's encrypted forwarding payload must still be validated by Floodgate on the backend using the matching key. Install and correctly configure Floodgate on each backend that uses this compatibility path. Non-Floodgate connections continue to require an allowed BungeeGuard token.
+
 ## Useful Links
 
 - [Download](https://github.com/nickuc/BungeeGuard/releases)
