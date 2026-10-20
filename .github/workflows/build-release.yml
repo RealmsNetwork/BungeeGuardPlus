@@ -51,20 +51,17 @@ jobs:
           set -euo pipefail
           mkdir -p release-files
 
-          for module in bungeeguard-bungee bungeeguard-spigot bungeeguard-sponge bungeeguard-universal; do
-            if [[ -d "$module/target" ]]; then
-              find "$module/target" -maxdepth 1 -type f -name '*.jar' \
-                ! -name '*-sources.jar' \
-                ! -name '*-javadoc.jar' \
-                ! -name '*-tests.jar' \
-                -exec cp {} release-files/ \;
+          # Release only the shaded, user-facing plugin JARs.
+          # The module JARs and shade-plugin original-* files are build intermediates.
+          for jar in \
+            "bungeeguard-universal/target/BungeeGuard.jar" \
+            "bungeeguard-sponge/target/BungeeGuard-Sponge.jar"; do
+            if [[ ! -f "$jar" ]]; then
+              echo "::error::Expected release artifact not found: $jar"
+              exit 1
             fi
+            cp "$jar" release-files/
           done
-
-          if ! find release-files -maxdepth 1 -type f -name '*.jar' -print -quit | grep -q .; then
-            echo "::error::The build completed without producing any distributable plugin JARs."
-            exit 1
-          fi
 
           (cd release-files && sha256sum ./*.jar > SHA256SUMS.txt)
           echo "Release files:"
