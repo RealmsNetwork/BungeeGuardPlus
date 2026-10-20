@@ -5,7 +5,7 @@ authors: [Luck, NickUC]
 load: STARTUP
 
 main: me.lucko.bungeeguard.spigot.BungeeGuardBackendPlugin
-softdepend: [ProtocolLib]
+softdepend: [ProtocolLib, floodgate]
 api-version: 1.13
 folia-supported: true
 

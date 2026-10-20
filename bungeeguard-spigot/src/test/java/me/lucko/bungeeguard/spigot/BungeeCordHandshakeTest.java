@@ -59,6 +59,46 @@ public class BungeeCordHandshakeTest {
     }
 
     @Test
+    public void acceptsOneUseMarkerMintedOnlyAfterFloodgateValidation() {
+        String marker = FloodgateHandshakeIntegration.createValidatedMarker();
+        String sanitizedHostname = String.join("\00", HOST, IP, UUID_VALUE.toString(), "[]");
+        String handshake = FloodgateHandshakeIntegration.insertMarkerAfterHostname(sanitizedHostname, marker);
+        assertEquals(String.join("\00", HOST, marker, IP, UUID_VALUE.toString(), "[]"), handshake);
+
+        BungeeCordHandshake result = BungeeCordHandshake.decodeAndVerify(handshake, defaultTokenStore());
+
+        assertTrue("A marker from Floodgate's successful decrypt callback should bypass the Java token gate", result instanceof BungeeCordHandshake.Success);
+        BungeeCordHandshake.Success success = (BungeeCordHandshake.Success) result;
+        assertEquals("Floodgate's private marker must not reach the server hostname", HOST, success.serverHostname());
+        assertEquals(IP, success.socketAddressHostname());
+        assertEquals(UUID_VALUE, success.uniqueId());
+
+        BungeeCordHandshake secondAttempt = BungeeCordHandshake.decodeAndVerify(handshake, configuredTokenStore());
+        assertTrue("The marker must be single-use", secondAttempt instanceof BungeeCordHandshake.Fail);
+    }
+
+    @Test
+    public void doesNotAppendValidatedMarkerAfterProperties() {
+        String marker = FloodgateHandshakeIntegration.createValidatedMarker();
+        String handshake = String.join("\00", HOST, IP, UUID_VALUE.toString(), "[]");
+
+        String marked = FloodgateHandshakeIntegration.insertMarkerAfterHostname(handshake, marker);
+
+        assertEquals(String.join("\00", HOST, marker, IP, UUID_VALUE.toString(), "[]"), marked);
+        assertFalse(marked.endsWith(marker));
+    }
+
+    @Test
+    public void forgedFloodgateIntegrationMarkerDoesNotBypassTokenValidation() {
+        String forged = "^RealmsNetworkBungeeGuard^not-a-real-nonce";
+        String handshake = String.join("\00", HOST, forged, IP, UUID_VALUE.toString(), "[]");
+
+        BungeeCordHandshake result = BungeeCordHandshake.decodeAndVerify(handshake, configuredTokenStore());
+
+        assertTrue(result instanceof BungeeCordHandshake.Fail);
+    }
+
+    @Test
     public void recognizesFloodgateMarkerAfterAdditionalHostnameComponent() {
         String payload = "^Floodgate^>encrypted-bedrock-payload";
         String handshake = String.join("\00", HOST, "education-forwarded-host", payload, IP, UUID_VALUE.toString(), "[]");
