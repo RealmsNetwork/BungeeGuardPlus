@@ -6,10 +6,12 @@ package me.lucko.bungeeguard.spigot;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.Plugin;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.security.SecureRandom;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -37,10 +39,40 @@ public final class FloodgateHandshakeIntegration {
     private FloodgateHandshakeIntegration() {
     }
 
-    /** Register a Floodgate handshake callback if Floodgate is installed and exposes its 2.x API. */
+    /**
+     * Detect Floodgate / EduFloodgate without assuming the plugin's declared casing or name.
+     * The API class is the strongest signal; the name check also lets the enable-event listener
+     * recognize the plugin before testing whether its API has finished initializing.
+     */
+    public static boolean isFloodgatePlugin(Plugin candidate) {
+        if (candidate == null) {
+            return false;
+        }
+        String name = candidate.getDescription().getName();
+        if (name != null && name.toLowerCase(Locale.ROOT).contains("floodgate")) {
+            return true;
+        }
+        try {
+            candidate.getClass().getClassLoader().loadClass("org.geysermc.floodgate.api.InstanceHolder");
+            return true;
+        } catch (ClassNotFoundException | LinkageError ignored) {
+            return false;
+        }
+    }
+
+    /** Register Floodgate's callback if a compatible, enabled instance is already available. */
     public static synchronized boolean register(Logger logger) {
-        Plugin floodgate = Bukkit.getPluginManager().getPlugin("floodgate");
-        if (floodgate == null || !floodgate.isEnabled()) {
+        for (Plugin candidate : Bukkit.getPluginManager().getPlugins()) {
+            if (candidate.isEnabled() && isFloodgatePlugin(candidate)) {
+                return register(candidate, logger);
+            }
+        }
+        return false;
+    }
+
+    /** Register a callback against the exact Floodgate plugin that has just enabled. */
+    public static synchronized boolean register(Plugin floodgate, Logger logger) {
+        if (floodgate == null || !floodgate.isEnabled() || !isFloodgatePlugin(floodgate)) {
             return false;
         }
         if (handlerId >= 0) {
@@ -88,7 +120,9 @@ public final class FloodgateHandshakeIntegration {
     private static void handleValidatedFloodgateHandshake(Object data, Logger logger) {
         try {
             boolean isFloodgatePlayer = Boolean.TRUE.equals(data.getClass().getMethod("isFloodgatePlayer").invoke(data));
-            if (!isFloodgatePlayer) {
+            if (!isFloodgatePlayer || !hasExpectedFloodgateDataLength(data)) {
+                // Floodgate also calls custom handlers for decrypt / malformed-data failures.
+                // Only valid payload lengths may mint a BungeeGuard bypass marker.
                 return;
             }
 
@@ -119,6 +153,24 @@ public final class FloodgateHandshakeIntegration {
         } catch (ReflectiveOperationException | RuntimeException ex) {
             logger.log(Level.WARNING, "Could not mark a Floodgate-validated handshake for BungeeGuard; the connection may still require a BungeeGuard token.", ex);
         }
+    }
+
+    private static boolean hasExpectedFloodgateDataLength(Object handshakeData) throws ReflectiveOperationException {
+        Object bedrockData = handshakeData.getClass().getMethod("getBedrockData").invoke(handshakeData);
+        if (bedrockData == null) {
+            return false;
+        }
+
+        Method getDataLength = bedrockData.getClass().getMethod("getDataLength");
+        int actualLength = ((Number) getDataLength.invoke(bedrockData)).intValue();
+
+        // EXPECTED_LENGTH is an implementation constant in Floodgate's BedrockData class rather
+        // than part of the public API. Read it reflectively to avoid a compile-time dependency;
+        // fail closed if a future Floodgate version removes or changes this validation contract.
+        Field expectedLengthField = bedrockData.getClass().getDeclaredField("EXPECTED_LENGTH");
+        expectedLengthField.setAccessible(true);
+        int expectedLength = expectedLengthField.getInt(null);
+        return actualLength == expectedLength;
     }
 
     static String insertMarkerAfterHostname(String hostname, String marker) {
