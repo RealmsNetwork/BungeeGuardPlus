@@ -44,18 +44,13 @@ public class BungeeCordHandshakeTest {
     }
 
     @Test
-    public void acceptsCurrentFloodgateMarkerAndDoesNotRequireBungeeGuardToken() {
-        String payload = "^Floodgate^>encrypted-bedrock-payload";
+    public void rejectsUnvalidatedFloodgatePayloadMarker() {
+        String payload = "^Floodgate^>client-supplied-data";
         String handshake = String.join("\00", HOST, payload, IP, UUID_VALUE.toString(), "[]");
 
         BungeeCordHandshake result = BungeeCordHandshake.decodeAndVerify(handshake, configuredTokenStore());
 
-        assertTrue("Floodgate should be accepted by BungeeGuard's token gate", result instanceof BungeeCordHandshake.Success);
-        BungeeCordHandshake.Success success = (BungeeCordHandshake.Success) result;
-        assertEquals(HOST + "\00" + payload, success.serverHostname());
-        assertEquals(IP, success.socketAddressHostname());
-        assertEquals(UUID_VALUE, success.uniqueId());
-        assertEquals("[]", success.propertiesJson());
+        assertTrue("A client-supplied Floodgate-looking string must not bypass token validation", result instanceof BungeeCordHandshake.Fail);
     }
 
     @Test
@@ -99,37 +94,33 @@ public class BungeeCordHandshakeTest {
     }
 
     @Test
-    public void recognizesFloodgateMarkerAfterAdditionalHostnameComponent() {
-        String payload = "^Floodgate^>encrypted-bedrock-payload";
+    public void rejectsUnvalidatedFloodgateMarkerAfterAdditionalHostnameComponent() {
+        String payload = "^Floodgate^>client-supplied-data";
         String handshake = String.join("\00", HOST, "education-forwarded-host", payload, IP, UUID_VALUE.toString(), "[]");
 
         BungeeCordHandshake result = BungeeCordHandshake.decodeAndVerify(handshake, configuredTokenStore());
 
-        assertTrue(result instanceof BungeeCordHandshake.Success);
-        BungeeCordHandshake.Success success = (BungeeCordHandshake.Success) result;
-        assertEquals(HOST + "\00education-forwarded-host\00" + payload, success.serverHostname());
-        assertEquals(IP, success.socketAddressHostname());
+        assertTrue(result instanceof BungeeCordHandshake.Fail);
     }
 
     @Test
-    public void recognizesFloodgateHandshakeWithoutPropertiesField() {
-        String payload = "^Floodgate^>encrypted-bedrock-payload";
+    public void rejectsUnvalidatedFloodgateMarkerWithoutPropertiesField() {
+        String payload = "^Floodgate^>client-supplied-data";
         String handshake = String.join("\00", HOST, payload, IP, UUID_VALUE.toString());
 
         BungeeCordHandshake result = BungeeCordHandshake.decodeAndVerify(handshake, configuredTokenStore());
 
-        assertTrue(result instanceof BungeeCordHandshake.Success);
-        assertEquals("[]", ((BungeeCordHandshake.Success) result).propertiesJson());
+        assertTrue(result instanceof BungeeCordHandshake.Fail);
     }
 
     @Test
-    public void acceptsFloodgateEvenWhenBungeeGuardTokensAreNotConfigured() {
-        String payload = "^Floodgate^>encrypted-bedrock-payload";
+    public void rejectsUnvalidatedFloodgateMarkerWhenTokensAreNotConfigured() {
+        String payload = "^Floodgate^>client-supplied-data";
         String handshake = String.join("\00", HOST, payload, IP, UUID_VALUE.toString(), "[]");
 
         BungeeCordHandshake result = BungeeCordHandshake.decodeAndVerify(handshake, defaultTokenStore());
 
-        assertTrue(result instanceof BungeeCordHandshake.Success);
+        assertTrue(result instanceof BungeeCordHandshake.Fail);
     }
 
     @Test
