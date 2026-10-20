@@ -100,8 +100,18 @@ public final class FloodgateHandshakeIntegration {
             }
 
             String marker = createValidatedMarker();
+            String markedHostname = insertMarkerAfterHostname(hostname, marker);
+            if (markedHostname == null) {
+                PENDING_MARKERS.remove(marker);
+                logger.warning("Floodgate validated a player, but its sanitized handshake had no forwarding separator; unable to add the BungeeGuard marker.");
+                return;
+            }
             try {
-                setHostname.invoke(data, hostname + '\0' + marker);
+                // Insert after the first (server hostname) component. Floodgate's callback
+                // receives the whole sanitized handshake host, including the proxy-forwarded
+                // address, UUID, and properties. Appending would put the marker after the
+                // properties array, where BungeeGuard's handshake parser cannot find it.
+                setHostname.invoke(data, markedHostname);
             } catch (ReflectiveOperationException | RuntimeException ex) {
                 PENDING_MARKERS.remove(marker);
                 throw ex;
@@ -109,6 +119,17 @@ public final class FloodgateHandshakeIntegration {
         } catch (ReflectiveOperationException | RuntimeException ex) {
             logger.log(Level.WARNING, "Could not mark a Floodgate-validated handshake for BungeeGuard; the connection may still require a BungeeGuard token.", ex);
         }
+    }
+
+    static String insertMarkerAfterHostname(String hostname, String marker) {
+        if (hostname == null || marker == null) {
+            return null;
+        }
+        int separator = hostname.indexOf('\0');
+        if (separator < 0) {
+            return null;
+        }
+        return hostname.substring(0, separator) + '\0' + marker + hostname.substring(separator);
     }
 
     static String createValidatedMarker() {
