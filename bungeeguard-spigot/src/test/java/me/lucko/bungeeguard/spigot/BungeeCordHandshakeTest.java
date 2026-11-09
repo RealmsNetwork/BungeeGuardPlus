@@ -58,7 +58,7 @@ public class BungeeCordHandshakeTest {
         String marker = FloodgateHandshakeIntegration.createValidatedMarker();
         String sanitizedHostname = String.join("\00", HOST, IP, UUID_VALUE.toString(), "[]");
         String handshake = FloodgateHandshakeIntegration.insertMarkerAfterHostname(sanitizedHostname, marker);
-        assertEquals(String.join("\00", HOST, marker, IP, UUID_VALUE.toString(), "[]"), handshake);
+        assertEquals(HOST + marker + "\00" + IP + "\00" + UUID_VALUE + "\00[]", handshake);
 
         BungeeCordHandshake result = BungeeCordHandshake.decodeAndVerify(handshake, defaultTokenStore());
 
@@ -73,14 +73,33 @@ public class BungeeCordHandshakeTest {
     }
 
     @Test
+    public void validatedMarkerSurvivesFloodgateHandlerRunningAfterBungeeGuardHandler() {
+        String marker = FloodgateHandshakeIntegration.createValidatedMarker();
+        String sanitizedHostname = String.join("\00", HOST, IP, UUID_VALUE.toString(), "[]");
+
+        // BungeeGuard's callback runs first, then Floodgate's own SpigotHandshakeHandler
+        // rewrites hostname components 1 and 2. The private marker must survive that order.
+        String marked = FloodgateHandshakeIntegration.insertMarkerAfterHostname(sanitizedHostname, marker);
+        String[] floodgateParts = marked.split("\\00");
+        floodgateParts[1] = IP;
+        floodgateParts[2] = UUID_VALUE.toString();
+        String afterFloodgateHandler = String.join("\00", floodgateParts);
+
+        BungeeCordHandshake result = BungeeCordHandshake.decodeAndVerify(afterFloodgateHandler, defaultTokenStore());
+
+        assertTrue("The marker must survive Floodgate's IP/UUID rewrite", result instanceof BungeeCordHandshake.Success);
+        assertEquals(HOST, ((BungeeCordHandshake.Success) result).serverHostname());
+    }
+
+    @Test
     public void doesNotAppendValidatedMarkerAfterProperties() {
         String marker = FloodgateHandshakeIntegration.createValidatedMarker();
         String handshake = String.join("\00", HOST, IP, UUID_VALUE.toString(), "[]");
 
         String marked = FloodgateHandshakeIntegration.insertMarkerAfterHostname(handshake, marker);
 
-        assertEquals(String.join("\00", HOST, marker, IP, UUID_VALUE.toString(), "[]"), marked);
-        assertFalse(marked.endsWith(marker));
+        assertEquals(HOST + marker + "\00" + IP + "\00" + UUID_VALUE + "\00[]", marked);
+        assertTrue(marked.startsWith(HOST + marker + "\00"));
     }
 
     @Test
