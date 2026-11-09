@@ -83,8 +83,10 @@ public class BungeeCordHandshake {
         boolean hasProperties = split.length >= 4 && isPropertiesArray(split[split.length - 1]);
         int socketAddressIndex = split.length - (hasProperties ? 3 : 2);
         int validatedFloodgateMarkerIndex = findValidatedFloodgateMarkerIndex(split, socketAddressIndex);
-        boolean hasValidatedFloodgateMarker = validatedFloodgateMarkerIndex >= 1
-                && FloodgateHandshakeIntegration.consumeValidatedMarker(split[validatedFloodgateMarkerIndex]);
+        String validatedFloodgateMarker = validatedFloodgateMarkerIndex == 0
+                ? split[0].substring(split[0].lastIndexOf("^RealmsNetworkBungeeGuard^")) : null;
+        boolean hasValidatedFloodgateMarker = validatedFloodgateMarkerIndex == 0
+                && FloodgateHandshakeIntegration.consumeValidatedMarker(validatedFloodgateMarker);
 
         // Never bypass Java token validation based only on a client-supplied ^Floodgate^ string.
         // The encrypted marker is normally consumed by Floodgate before this listener runs; our
@@ -101,6 +103,8 @@ public class BungeeCordHandshake {
                 // PlayerHandshakeEvent fires. Our one-use marker bridges that lifecycle gap;
                 // strip it so it never reaches the actual Minecraft server hostname.
                 if (hasValidatedFloodgateMarker && i == validatedFloodgateMarkerIndex) {
+                    // Remove only the private marker suffix; preserve the actual server host.
+                    hostnameComponents.add(split[i].substring(0, split[i].lastIndexOf("^RealmsNetworkBungeeGuard^")));
                     continue;
                 }
                 hostnameComponents.add(split[i]);
@@ -195,15 +199,19 @@ public class BungeeCordHandshake {
     }
 
     private static int findValidatedFloodgateMarkerIndex(String[] split, int socketAddressIndex) {
-        if (socketAddressIndex <= 1) {
+        // The marker is a suffix of the first hostname component. This location survives
+        // Floodgate's own handler regardless of the order in which Floodgate invokes
+        // registered HandshakeHandlers (its handler rewrites components 1 and 2).
+        if (socketAddressIndex < 1 || split.length == 0) {
             return -1;
         }
-        for (int i = 1; i < socketAddressIndex; i++) {
-            if (FloodgateHandshakeIntegration.isValidatedMarkerCandidate(split[i])) {
-                return i;
-            }
+        String firstComponent = split[0];
+        int markerStart = firstComponent.lastIndexOf("^RealmsNetworkBungeeGuard^");
+        if (markerStart <= 0) {
+            return -1;
         }
-        return -1;
+        String marker = firstComponent.substring(markerStart);
+        return FloodgateHandshakeIntegration.isValidatedMarkerCandidate(marker) ? 0 : -1;
     }
 
     private static boolean isPropertiesArray(String value) {
