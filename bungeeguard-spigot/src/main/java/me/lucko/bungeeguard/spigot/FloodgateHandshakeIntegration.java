@@ -181,7 +181,11 @@ public final class FloodgateHandshakeIntegration {
         if (separator < 0) {
             return null;
         }
-        return hostname.substring(0, separator) + '\0' + marker + hostname.substring(separator);
+        // Keep the marker inside the first hostname component. Floodgate's own
+        // SpigotHandshakeHandler rewrites components 1 and 2 (IP and UUID) using
+        // setHostname; a separate component at index 1 is therefore order-dependent
+        // because Floodgate invokes registered handlers from a hash map.
+        return hostname.substring(0, separator) + marker + hostname.substring(separator);
     }
 
     static String createValidatedMarker() {
@@ -201,7 +205,17 @@ public final class FloodgateHandshakeIntegration {
     }
 
     static boolean isValidatedMarkerCandidate(String value) {
-        return value != null && value.startsWith(MARKER_PREFIX) && value.length() > MARKER_PREFIX.length();
+        if (value == null || !value.startsWith(MARKER_PREFIX)
+                || value.length() != MARKER_PREFIX.length() + 48) {
+            return false;
+        }
+        for (int i = MARKER_PREFIX.length(); i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static boolean consumeValidatedMarker(String marker) {
